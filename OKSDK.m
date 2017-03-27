@@ -178,6 +178,8 @@ typedef void (^OKCompletitionHander)(id data, NSError *error);
 
 @property(nonatomic,strong) NSMutableDictionary *completitionHandlers;
 
+@property(nonatomic) BOOL isInAuthorization;
+
 @end
 
 @implementation OKConnection
@@ -202,6 +204,8 @@ typedef void (^OKCompletitionHander)(id data, NSError *error);
         NSUserDefaults *userDefaults = [NSUserDefaults standardUserDefaults];
         _accessToken = [userDefaults objectForKey:OK_USER_DEFS_ACCESS_TOKEN];
         _accessTokenSecretKey = [userDefaults objectForKey:OK_USER_DEFS_SECRET_KEY];
+        
+        [[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(appDidBecomeActive) name:UIApplicationDidBecomeActiveNotification object:nil];
     }
     return self;
 }
@@ -230,11 +234,25 @@ typedef void (^OKCompletitionHander)(id data, NSError *error);
     }
 }
 
+- (void)appDidBecomeActive
+{
+    if (self.isInAuthorization)
+    {
+        for (OKCompletitionHander complHandler in [self.completitionHandlers allValues])
+        {
+            complHandler(nil, [NSError errorWithDomain:OK_SDK_ERROR_CODE_DOMAIN code:-1 userInfo:nil]);
+        }
+        [self.completitionHandlers removeAllObjects];
+        self.isInAuthorization = NO;
+    }
+}
+
 
 - (BOOL)openUrl:(NSURL *)url {
     dispatch_async(dispatch_get_main_queue(), ^{
         [self.safariVC dismissViewControllerAnimated:YES completion:nil];
     });
+    self.isInAuthorization = NO;
     NSString *key = [[url absoluteString] componentsSeparatedByCharactersInSet:[NSCharacterSet characterSetWithCharactersInString:@"#?"]][0];
     OKCompletitionHander completitionHander = self.completitionHandlers[key];
     NSDictionary *answer = [url ok_params];
@@ -252,10 +270,7 @@ typedef void (^OKCompletitionHander)(id data, NSError *error);
 }
 
 - (void)authorizeWithPermissions:(NSArray *)permissions success:(OKResultBlock)successBlock error:(OKErrorBlock)errorBlock {
-    if (self.accessToken && self.accessTokenSecretKey) {
-        return successBlock(@[self.accessToken, self.accessTokenSecretKey]);
-    }
-
+    self.isInAuthorization = YES;
     UIApplication *app = [UIApplication sharedApplication];
     if (![NSBundle ok_hasRegisteredURLScheme:self.oauthRedirectScheme]) {
         return errorBlock([OKConnection sdkError:OKSDKErrorCodeNoSchemaRegistered format:@"%@ schema should be registered for current app", self.oauthRedirectUri]);
@@ -275,7 +290,32 @@ typedef void (^OKCompletitionHander)(id data, NSError *error);
             }
         }
     };
-    if (![app openURL: appUrl]) {
+    
+    if ([[UIApplication sharedApplication] canOpenURL:appUrl]) // Если установлено приложение
+    {
+#ifdef __AVAILABILITY_INTERNAL__IPHONE_10_0_DEP__IPHONE_10_0
+        if ([app respondsToSelector:@selector(openURL:options:completionHandler:)]) {
+            
+            NSDictionary *options = @{ UIApplicationOpenURLOptionUniversalLinksOnly: @NO };
+            
+            [app openURL:appUrl options:options completionHandler:^(BOOL success) {
+                
+                if (!success)
+                    errorBlock([NSError errorWithDomain:OK_SDK_ERROR_CODE_DOMAIN code:-1 userInfo:nil]);
+            }];
+        } else {
+            if (![app openURL: appUrl]) {
+                [self openInSafari:[NSURL URLWithString:[NSString stringWithFormat:@"%@?%@",OK_OAUTH_URL,queryString]] success: successBlock error: errorBlock];
+            }
+        }
+#else
+        if (![app openURL: appUrl]) {
+            [self openInSafari:[NSURL URLWithString:[NSString stringWithFormat:@"%@?%@",OK_OAUTH_URL,queryString]] success: successBlock error: errorBlock];
+        }
+#endif
+    }
+    else
+    {
         [self openInSafari:[NSURL URLWithString:[NSString stringWithFormat:@"%@?%@",OK_OAUTH_URL,queryString]] success: successBlock error: errorBlock];
     }
 }
@@ -360,6 +400,11 @@ typedef void (^OKCompletitionHander)(id data, NSError *error);
              deleteCookie:cookie];
         }
     }
+}
+
+- (void)dealloc
+{
+    [[NSNotificationCenter defaultCenter] removeObserver:self];
 }
 
 @end
