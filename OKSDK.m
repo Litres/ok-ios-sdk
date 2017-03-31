@@ -18,6 +18,7 @@ NSString *const OK_API_URL = @"https://api.ok.ru/fb.do?";
 NSString *const OK_OAUTH_APP_URL = @"okauth://authorize";
 NSString *const OK_USER_DEFS_ACCESS_TOKEN = @"ok_access_token";
 NSString *const OK_USER_DEFS_SECRET_KEY = @"ok_secret_key";
+NSString *const OK_USER_DEFS_TOKEN_DATE = @"ok_token_date";
 NSString *const OK_SDK_NOT_INIT_COMMON_ERROR = @"OKSDK not initialized you should call initWithSettings first";
 //export
 NSString *const OK_API_ERROR_CODE_DOMAIN = @"ru.ok.api";
@@ -270,6 +271,13 @@ typedef void (^OKCompletitionHander)(id data, NSError *error);
 }
 
 - (void)authorizeWithPermissions:(NSArray *)permissions success:(OKResultBlock)successBlock error:(OKErrorBlock)errorBlock {
+    NSDate *lastDate = [[NSUserDefaults standardUserDefaults] objectForKey:OK_USER_DEFS_TOKEN_DATE];
+    if ([[NSDate date] timeIntervalSinceDate:lastDate] > 360) // Прошло больше часа с момента прошлой авторизации
+        [self clearAuth];
+    
+    if (self.accessToken && self.accessTokenSecretKey) {
+        return successBlock(@[self.accessToken, self.accessTokenSecretKey]);
+    }
     self.isInAuthorization = YES;
     UIApplication *app = [UIApplication sharedApplication];
     if (![NSBundle ok_hasRegisteredURLScheme:self.oauthRedirectScheme]) {
@@ -324,6 +332,7 @@ typedef void (^OKCompletitionHander)(id data, NSError *error);
     NSUserDefaults *userDefaults = [NSUserDefaults standardUserDefaults];
     [userDefaults setObject:(self.accessToken = data[@"access_token"]) forKey:OK_USER_DEFS_ACCESS_TOKEN];
     [userDefaults setObject:(self.accessTokenSecretKey = data[@"session_secret_key"]) forKey:OK_USER_DEFS_SECRET_KEY];
+    [userDefaults setObject:[NSDate date] forKey:OK_USER_DEFS_TOKEN_DATE];
     [userDefaults synchronize];
 }
 
